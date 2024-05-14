@@ -3,6 +3,8 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <unordered_set>
+#include <string_view>
 
 #include "pe.h"
 
@@ -13,7 +15,7 @@ bool is_binary_section(std::uint32_t characteristics) {
 }
 
 bool stub::find_binary() {
-  auto base = reinterpret_cast<std::uint8_t const *>(GetModuleHandleA(nullptr));
+  auto base = reinterpret_cast<std::uint8_t *>(GetModuleHandleA(nullptr));
   if (!base)
     return false;
   
@@ -22,6 +24,7 @@ bool stub::find_binary() {
     IMAGE_SECTION_HEADER const *sect_hdr = pe::sect_header(nt_hdr, i);
     if (is_binary_section(sect_hdr->Characteristics)) {
       binary_ = base + sect_hdr->VirtualAddress;
+      raw_size_ = sect_hdr->SizeOfRawData;
       return true;
     }
   }
@@ -58,7 +61,6 @@ bool resolve_imports(IMAGE_NT_HEADERS const *nt_hdr, std::uint8_t *base) {
     if (!lib)
       return false;
 
-    IMAGE_THUNK_DATA;
     auto ilt = reinterpret_cast<std::uint64_t const *>(base + desc->OriginalFirstThunk);
     auto iat = reinterpret_cast<std::uint64_t *>(base + desc->FirstThunk);
 
@@ -92,12 +94,23 @@ bool protect_sections(IMAGE_NT_HEADERS const *nt_hdr, std::uint8_t *base) {
   return true;
 }
 
+void stub::decrypt_binary() {
+  IMAGE_NT_HEADERS const *nt_hdr = pe::nt_header(binary_);
+  constexpr std::string_view key = "hello world";
+  int cursor = 0;
+  std::transform(binary_, binary_ + raw_size_, binary_, [&] (std::uint8_t byte) {
+    cursor = cursor % key.length();
+    return byte ^ key.at(cursor++);
+  });
+}
+
 map_status_t stub::map_binary() {
   IMAGE_NT_HEADERS const *nt_hdr = pe::nt_header(binary_);
   mapped_base_ = static_cast<std::uint8_t *>(VirtualAlloc(nullptr, nt_hdr->OptionalHeader.SizeOfImage, 
     MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
   if (!mapped_base_)
     return map_status_t::allocate_image;
+  mapped_size_ = nt_hdr->OptionalHeader.SizeOfImage;
 
   for (int i = 0; i < pe::sect_cnt(nt_hdr); ++i) {
     IMAGE_SECTION_HEADER const *sect_hdr = pe::sect_header(nt_hdr, i);

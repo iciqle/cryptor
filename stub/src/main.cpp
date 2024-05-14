@@ -20,11 +20,14 @@ status_t run(int argc, char const **argv) {
   if (!stb::get().find_binary())
     return status_t::find_binary;
 
+  stb::get().decrypt_binary();
+
   stb::map_status_t status = stb::get().map_binary();
   if (status != stb::map_status_t::succes)
     return status_t::map_binary;
 
   stb::get().run_binary(argc, argv);
+
   return status_t::success;
 }
 
